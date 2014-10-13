@@ -362,16 +362,16 @@ object Enumerator {
    *          to unfold and the next input, or none if the value is completely unfolded.
    * $paramEcSingle
    */
-  def unfoldM[S, E](s: S)(f: S => Future[Option[(S, E)]])(implicit ec: ExecutionContext): Enumerator[E] = checkContinue1(s)(new TreatCont1[E, S] {
+  def unfoldM[S, E](s: S)(f: S => Future[Option[(S, E)]])(implicit ec: ExecutionContext): Enumerator[E] = new StatefulLoopingEnumerator[E, S](s) {
     val pec = ec.prepare()
 
-    def apply[A](loop: (Iteratee[E, A], S) => Future[Iteratee[E, A]], s: S, k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]] = {
+    def cont[A](loop: (Iteratee[E, A], S) => Future[Iteratee[E, A]], s: S, k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]] = {
       executeFuture(f(s))(pec).flatMap {
         case Some((newS, e)) => loop(k(Input.El(e)), newS)
         case None => Future.successful(Cont(k))
       }(dec)
     }
-  })
+  }
 
   /**
    * Unfold a value of type S into input for an enumerator.
@@ -390,14 +390,14 @@ object Enumerator {
    *          the next input, or none if the value is completely unfolded.
    * $paramEcSingle
    */
-  def unfold[S, E](s: S)(f: S => Option[(S, E)])(implicit ec: ExecutionContext): Enumerator[E] = checkContinue1(s)(new TreatCont1[E, S] {
+  def unfold[S, E](s: S)(f: S => Option[(S, E)])(implicit ec: ExecutionContext): Enumerator[E] = new StatefulLoopingEnumerator[E, S](s) {
     val pec = ec.prepare()
 
-    def apply[A](loop: (Iteratee[E, A], S) => Future[Iteratee[E, A]], s: S, k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]] = Future(f(s))(pec).flatMap {
+    def cont[A](loop: (Iteratee[E, A], S) => Future[Iteratee[E, A]], s: S, k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]] = Future(f(s))(pec).flatMap {
       case Some((s, e)) => loop(k(Input.El(e)), s)
       case None => Future.successful(Cont(k))
     }(dec)
-  })
+  }
 
   /**
    * Repeat the given input function indefinitely.
@@ -405,12 +405,12 @@ object Enumerator {
    * @param e The input function.
    * $paramEcSingle
    */
-  def repeat[E](e: => E)(implicit ec: ExecutionContext): Enumerator[E] = checkContinue0(new TreatCont0[E] {
+  def repeat[E](e: => E)(implicit ec: ExecutionContext): Enumerator[E] = new LoopingEnumerator[E] {
     val pec = ec.prepare()
 
-    def apply[A](loop: Iteratee[E, A] => Future[Iteratee[E, A]], k: Input[E] => Iteratee[E, A]) = Future(e)(pec).flatMap(ee => loop(k(Input.El(ee))))(dec)
+    def cont[A](loop: Iteratee[E, A] => Future[Iteratee[E, A]], k: Input[E] => Iteratee[E, A]) = Future(e)(pec).flatMap(ee => loop(k(Input.El(ee))))(dec)
 
-  })
+  }
 
   /**
    * Like [[play.api.libs.iteratee.Enumerator.repeat]], but allows repeated values to be asynchronously fetched.
@@ -418,12 +418,12 @@ object Enumerator {
    * @param e The input function
    * $paramEcSingle
    */
-  def repeatM[E](e: => Future[E])(implicit ec: ExecutionContext): Enumerator[E] = checkContinue0(new TreatCont0[E] {
+  def repeatM[E](e: => Future[E])(implicit ec: ExecutionContext): Enumerator[E] = new LoopingEnumerator[E] {
     val pec = ec.prepare()
 
-    def apply[A](loop: Iteratee[E, A] => Future[Iteratee[E, A]], k: Input[E] => Iteratee[E, A]) = executeFuture(e)(pec).flatMap(ee => loop(k(Input.El(ee))))(dec)
+    def cont[A](loop: Iteratee[E, A] => Future[Iteratee[E, A]], k: Input[E] => Iteratee[E, A]) = executeFuture(e)(pec).flatMap(ee => loop(k(Input.El(ee))))(dec)
 
-  })
+  }
 
   /**
    * Like [[play.api.libs.iteratee.Enumerator.repeatM]], but the callback returns an Option, which allows the stream
@@ -432,53 +432,49 @@ object Enumerator {
    * @param e The input function.  Returns a future eventually redeemed with Some value if there is input to pass, or a
    *          future eventually redeemed with None if the end of the stream has been reached.
    */
-  def generateM[E](e: => Future[Option[E]])(implicit ec: ExecutionContext): Enumerator[E] = checkContinue0(new TreatCont0[E] {
+  def generateM[E](e: => Future[Option[E]])(implicit ec: ExecutionContext): Enumerator[E] = new LoopingEnumerator[E] {
     val pec = ec.prepare()
 
-    def apply[A](loop: Iteratee[E, A] => Future[Iteratee[E, A]], k: Input[E] => Iteratee[E, A]) = executeFuture(e)(pec).flatMap {
+    def cont[A](loop: Iteratee[E, A] => Future[Iteratee[E, A]], k: Input[E] => Iteratee[E, A]) = executeFuture(e)(pec).flatMap {
       case Some(e) => loop(k(Input.El(e)))
       case None => Future.successful(Cont(k))
     }(dec)
-  })
+  }
 
+  @deprecated(
+    message = "Please extend LoopingEnumerator instead of TreatCont0.",
+    since = "2.4.0")
   trait TreatCont0[E] {
 
     def apply[A](loop: Iteratee[E, A] => Future[Iteratee[E, A]], k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]]
 
   }
 
-  def checkContinue0[E](inner: TreatCont0[E]) = new Enumerator[E] {
-
-    def apply[A](it: Iteratee[E, A]): Future[Iteratee[E, A]] = {
-
-      def step(it: Iteratee[E, A]): Future[Iteratee[E, A]] = it.fold {
-        case Step.Done(a, e) => Future.successful(Done(a, e))
-        case Step.Cont(k) => inner[A](step, k)
-        case Step.Error(msg, e) => Future.successful(Error(msg, e))
-      }(dec)
-
-      step(it)
+  @deprecated(
+    message = "Please extend LoopingEnumerator instead of calling checkContinue0.",
+    since = "2.4.0")
+  def checkContinue0[E](inner: TreatCont0[E]): Enumerator[E] = new LoopingEnumerator[E] {
+    override def cont[A](loop: Iteratee[E, A] => Future[Iteratee[E, A]], k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]] = {
+      inner[A](loop, k)
     }
   }
 
+  @deprecated(
+    message = "Please extend StatefulLoopingEnumerator instead of TreatCont1.",
+    since = "2.4.0")
   trait TreatCont1[E, S] {
 
     def apply[A](loop: (Iteratee[E, A], S) => Future[Iteratee[E, A]], s: S, k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]]
 
   }
 
-  def checkContinue1[E, S](s: S)(inner: TreatCont1[E, S]) = new Enumerator[E] {
-
-    def apply[A](it: Iteratee[E, A]): Future[Iteratee[E, A]] = {
-
-      def step(it: Iteratee[E, A], state: S): Future[Iteratee[E, A]] = it.fold {
-        case Step.Done(a, e) => Future.successful(Done(a, e))
-        case Step.Cont(k) => inner[A](step, state, k)
-        case Step.Error(msg, e) => Future.successful(Error(msg, e))
-      }(dec)
-      step(it, s)
+  @deprecated(
+    message = "Please extend StatefulLoopingEnumerator instead of calling checkContinue1.",
+    since = "2.4.0")
+  def checkContinue1[E, S](s: S)(inner: TreatCont1[E, S]): Enumerator[E] = new StatefulLoopingEnumerator[E, S](s) {
+    override def cont[A](loop: (Iteratee[E, A], S) => Future[Iteratee[E, A]], s: S, k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]] = {
+      inner[A](loop, s, k)
     }
-
   }
 
   /**
@@ -635,7 +631,13 @@ object Enumerator {
       }
     }
     case _ => new Enumerator[E] {
-      def apply[A](i: Iteratee[E, A]): Future[Iteratee[E, A]] = enumerateSeq(in, i)
+      def apply[A](i: Iteratee[E, A]): Future[Iteratee[E, A]] = {
+        in.foldLeft(Future.successful(i))((i, e) =>
+          i.flatMap(it => it.pureFold {
+            case Step.Cont(k) => k(Input.El(e))
+            case _ => it
+          }(dec))(dec))
+      }
     }
   }
 
@@ -669,26 +671,44 @@ object Enumerator {
     def apply[A](i: Iteratee[E, A]) = Future.successful(i)
   }
 
-  private def enumerateSeq[E, A]: (Seq[E], Iteratee[E, A]) => Future[Iteratee[E, A]] = { (l, i) =>
-    l.foldLeft(Future.successful(i))((i, e) =>
-      i.flatMap(it => it.pureFold {
-        case Step.Cont(k) => k(Input.El(e))
-        case _ => it
-      }(dec))(dec))
-  }
-
-  private[iteratee] def enumerateSeq1[E](s: Seq[E]): Enumerator[E] = checkContinue1(s)(new TreatCont1[E, Seq[E]] {
-    def apply[A](loop: (Iteratee[E, A], Seq[E]) => Future[Iteratee[E, A]], s: Seq[E], k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]] =
+  private[iteratee] def enumerateSeq1[E](s: Seq[E]): Enumerator[E] = new StatefulLoopingEnumerator[E, Seq[E]](s) {
+    def cont[A](loop: (Iteratee[E, A], Seq[E]) => Future[Iteratee[E, A]], s: Seq[E], k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]] =
       if (!s.isEmpty)
         loop(k(Input.El(s.head)), s.tail)
       else Future.successful(Cont(k))
-  })
+  }
 
-  private[iteratee] def enumerateSeq2[E](s: Seq[Input[E]]): Enumerator[E] = checkContinue1(s)(new TreatCont1[E, Seq[Input[E]]] {
-    def apply[A](loop: (Iteratee[E, A], Seq[Input[E]]) => Future[Iteratee[E, A]], s: Seq[Input[E]], k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]] =
+  private[iteratee] def enumerateSeq2[E](s: Seq[Input[E]]): Enumerator[E] = new StatefulLoopingEnumerator[E, Seq[Input[E]]](s) {
+    def cont[A](loop: (Iteratee[E, A], Seq[Input[E]]) => Future[Iteratee[E, A]], s: Seq[Input[E]], k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]] =
       if (!s.isEmpty)
         loop(k(s.head), s.tail)
       else Future.successful(Cont(k))
-  })
+  }
 
+}
+
+abstract class LoopingEnumerator[E] extends Enumerator[E] {
+  def cont[A](loop: Iteratee[E, A] => Future[Iteratee[E, A]], k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]]
+  def apply[A](it: Iteratee[E, A]): Future[Iteratee[E, A]] = {
+
+    def step(it: Iteratee[E, A]): Future[Iteratee[E, A]] = it.fold {
+      case Step.Done(a, e) => Future.successful(Done(a, e))
+      case Step.Cont(k) => cont[A](step, k)
+      case Step.Error(msg, e) => Future.successful(Error(msg, e))
+    }(dec)
+
+    step(it)
+  }
+}
+
+abstract class StatefulLoopingEnumerator[E, S](s: S) extends Enumerator[E] {
+  def cont[A](loop: (Iteratee[E, A], S) => Future[Iteratee[E, A]], s: S, k: Input[E] => Iteratee[E, A]): Future[Iteratee[E, A]]
+  def apply[A](it: Iteratee[E, A]): Future[Iteratee[E, A]] = {
+    def step(it: Iteratee[E, A], state: S): Future[Iteratee[E, A]] = it.fold {
+      case Step.Done(a, e) => Future.successful(Done(a, e))
+      case Step.Cont(k) => cont[A](step, state, k)
+      case Step.Error(msg, e) => Future.successful(Error(msg, e))
+    }(dec)
+    step(it, s)
+  }
 }
