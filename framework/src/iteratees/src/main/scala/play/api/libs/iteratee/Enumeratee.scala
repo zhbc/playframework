@@ -228,7 +228,7 @@ object Enumeratee {
    * Create an enumeratee that transforms its input into a sequence of inputs for the target iteratee.
    */
   def mapConcatInput[From] = new MapConcatInput[From] {
-    def apply[To](f: From => Seq[Input[To]])(implicit ec: ExecutionContext) = mapFlatten[From](in => Enumerator.enumerateSeq2(f(in)))(ec)
+    def apply[To](f: From => Seq[Input[To]])(implicit ec: ExecutionContext) = mapFlatten[From](in => Enumerator.enumerateInputSeq(f(in)))(ec)
   }
 
   /**
@@ -246,7 +246,7 @@ object Enumeratee {
    * Create an Enumeratee that transforms its input elements into a sequence of input elements for the target Iteratee.
    */
   def mapConcat[From] = new MapConcat[From] {
-    def apply[To](f: From => Seq[To])(implicit ec: ExecutionContext) = mapFlatten[From](in => Enumerator.enumerateSeq1(f(in)))(ec)
+    def apply[To](f: From => Seq[To])(implicit ec: ExecutionContext) = mapFlatten[From](in => Enumerator.enumerateSeq(f(in)))(ec)
   }
 
   /**

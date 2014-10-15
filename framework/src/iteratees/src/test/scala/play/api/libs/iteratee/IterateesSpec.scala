@@ -497,7 +497,7 @@ object IterateesSpec extends Specification
     "return its concatenated input" in {
       val s = List(List(1, 2), List(3), List(4, 5))
       val r = List(1, 2, 3, 4, 5)
-      await(Enumerator.enumerateSeq1(s) |>>> Iteratee.consume[List[Int]]()) must equalTo(r)
+      await(Enumerator.enumerateSeq(s) |>>> Iteratee.consume[List[Int]]()) must equalTo(r)
     }
 
   }
@@ -506,7 +506,7 @@ object IterateesSpec extends Specification
 
     "return its input as a list" in {
       val s = List(1, 2, 3, 4, 5)
-      await(Enumerator.enumerateSeq1(s) |>>> Iteratee.getChunks[Int]) must equalTo(s)
+      await(Enumerator.enumerateSeq(s) |>>> Iteratee.getChunks[Int]) must equalTo(s)
     }
 
   }
